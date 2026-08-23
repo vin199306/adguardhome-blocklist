@@ -1,3 +1,4 @@
 querylog.json
 *.key
 .DS_Store
+.workbuddy/
