@@ -1,0 +1,94 @@
+name: AdGuard Blocklist Sync
+
+on:
+  schedule:
+    # 每天 UTC 19:17 ≈ 北京时间 03:17；可改为你想要的时间
+    - cron: "17 19 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      # 1) 下载所有 blocklist 源并去重，生成 blocklist.txt
+      - name: Build combined blocklist
+        run: python scripts/build_blocklist.py
+
+      - name: Commit blocklist.txt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -f blocklist.txt ]; then git add blocklist.txt; fi
+          if git diff --cached --quiet; then
+            echo "blocklist.txt 无变化"
+          else
+            git commit -m "chore: update blocklist.txt [skip ci]"
+            git push
+          fi
+
+      # 2) 通知 AdGuard Home 更新规则（需要配置 AGH_* 密钥）
+      - name: Notify AdGuard Home (update rules)
+        if: ${{ secrets.AGH_BASE_URL != '' }}
+        env:
+          AGH_BASE_URL: ${{ secrets.AGH_BASE_URL }}
+          AGH_BASE_PATH: ${{ secrets.AGH_BASE_PATH }}
+          AGH_USER: ${{ secrets.AGH_USER }}
+          AGH_PASSWORD: ${{ secrets.AGH_PASSWORD }}
+          AGH_UPDATE_MODE: ${{ secrets.AGH_UPDATE_MODE }}
+          AGH_FILTER_URL: ${{ secrets.AGH_FILTER_URL }}
+          AGH_FILTER_NAME: ${{ secrets.AGH_FILTER_NAME }}
+          AGH_VERIFY_SSL: ${{ secrets.AGH_VERIFY_SSL }}
+        continue-on-error: true
+        run: python scripts/agh_update.py
+
+      # 3) 通过 SCP 从 AdGuard Home 服务器拉取 querylog.json
+      - name: Fetch querylog.json via SCP
+        if: ${{ secrets.AGH_SSH_HOST != '' }}
+        env:
+          AGH_SSH_HOST: ${{ secrets.AGH_SSH_HOST }}
+          AGH_SSH_PORT: ${{ secrets.AGH_SSH_PORT }}
+          AGH_SSH_USER: ${{ secrets.AGH_SSH_USER }}
+          AGH_SSH_KEY: ${{ secrets.AGH_SSH_KEY }}
+          AGH_QUERYLOG_PATH: ${{ secrets.AGH_QUERYLOG_PATH }}
+        continue-on-error: true
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$AGH_SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          PORT="${AGH_SSH_PORT:-22}"
+          ssh-keyscan -p "$PORT" "$AGH_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          scp -P "$PORT" "$AGH_SSH_USER@$AGH_SSH_HOST:${AGH_QUERYLOG_PATH:-/opt/AdGuardHome/data/querylog.json}" querylog.json
+          echo "fetched querylog.json: $(wc -c < querylog.json) bytes"
+
+      # 4) 解析 querylog，提取被拦截域名并合并到 blockedlist.txt
+      - name: Build blockedlist from querylog
+        if: ${{ secrets.AGH_SSH_HOST != '' || hashFiles('querylog.json') != '' }}
+        continue-on-error: true
+        run: python scripts/build_blockedlist.py --input querylog.json --output blockedlist.txt
+
+      - name: Commit blockedlist.txt
+        if: ${{ hashFiles('blockedlist.txt') != '' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -f blockedlist.txt ]; then git add blockedlist.txt; fi
+          if git diff --cached --quiet; then
+            echo "blockedlist.txt 无变化"
+          else
+            git commit -m "chore: update blockedlist.txt [skip ci]"
+            git push
+          fi

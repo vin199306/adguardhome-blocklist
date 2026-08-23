@@ -1,0 +1,14 @@
+# AdGuardHome 规则聚合 —— 每行一个 blocklist 源地址
+# 说明：
+#   - 本文件是“数据源清单”，由你手动维护（往里加网络上搜集到的 blocklist 链接）。
+#   - 工作流每天读取本文件，下载所有链接并去重，合并生成 blocklist.txt。
+#   - 支持普通 URL；国内访问 GitHub 慢时可用 ghfast.top 等代理前缀（见示例）。
+#   - # 开头为注释；空行忽略。
+
+# 示例（你提供的规则，已用 ghfast.top 代理加速 GitHub Release 下载）
+https://ghfast.top/https://github.com/zhuanshenlikaini/AdguardHome-Rules/releases/download/stable-latest/Black.txt
+
+# 常用公共规则源（按需增删；构建时由 GitHub Actions 美国节点下载，无需代理）
+https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
+https://easylist.to/easylist/easylist.txt
